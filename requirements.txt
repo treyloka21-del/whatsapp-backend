@@ -1,13 +1,7 @@
-# Force setuptools and wheel first
-setuptools>=65.0.0
-wheel
-
-# Core backend
 Flask==2.3.2
 gspread==5.7.2
 oauth2client==4.1.3
 requests==2.32.0
-
-# Numeric packages compatibles con Python 3.14
-numpy>=1.26.0
-pandas>=2.1.0
+numpy==2.4.2
+pandas==3.0.1
+gunicorn==21.2.0
