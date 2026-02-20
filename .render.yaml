@@ -2,6 +2,6 @@ services:
   - type: web
     name: whatsapp-backend
     env: python
-    runtime: python-3.11.9
+    runtime: python-3.14.3
     buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
     startCommand: python main.py
