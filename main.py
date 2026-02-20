@@ -7,11 +7,16 @@ import os
 app = Flask(__name__)
 
 # 🔹 Configurar Google Sheets
-scope = ["https://spreadsheets.google.com/feeds",
-         "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
+# Cambié aquí para que use la carpeta 'credentials'
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials/credentials.json", scope)
 client = gspread.authorize(creds)
 
+# 🔹 Hojas de Google Sheets
 hoja_finanzas = client.open("Nombre_de_tu_sheets").worksheet("Hoja1")  # Estado financiero
 hoja_cotizaciones = client.open("Nombre_de_tu_sheets").worksheet("Hoja5")  # Historial cotizaciones
 
