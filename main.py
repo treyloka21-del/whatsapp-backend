@@ -12,20 +12,20 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Cambié aquí para que use la carpeta 'credentials'
+# Ruta al JSON de tu Service Account
 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials/credentials.json", scope)
 client = gspread.authorize(creds)
 
-# 🔹 Hojas de Google Sheets
-hoja_finanzas = client.open("Nombre_de_tu_sheets").worksheet("Hoja1")  # Estado financiero
-hoja_cotizaciones = client.open("Nombre_de_tu_sheets").worksheet("Hoja5")  # Historial cotizaciones
+# 🔹 Definir hojas de Google Sheets
+hoja_finanzas = client.open("Nombre_de_tu_sheets").worksheet("Hoja1")       # Estado financiero
+hoja_cotizaciones = client.open("Nombre_de_tu_sheets").worksheet("Hoja5")   # Historial cotizaciones
 
-# 🔹 Función para guardar pagos pendientes en Hoja5
+# 🔹 Función para guardar pagos pendientes
 def guardar_pago_pendiente(nombre, celular, ambientes, total_cotizado, monto_pagado, voucher_url=None):
     hoja_cotizaciones.append_row([nombre, celular, ambientes, total_cotizado, monto_pagado, "Pendiente", voucher_url])
     return {"status": "pendiente", "nombre": nombre}
 
-# 🔹 Función para actualizar Hoja1 después de confirmación
+# 🔹 Función para actualizar finanzas después de confirmación
 def actualizar_finanzas(nombre, celular, ambientes, total_cotizado, monto_pagado):
     total = float(total_cotizado)
     deposito = float(monto_pagado)
@@ -69,7 +69,7 @@ def webhook_pago():
     resultado = guardar_pago_pendiente(nombre, celular, ambientes, total_cotizado, monto_pagado, voucher_url)
     return jsonify({"status": "ok", "resultado": resultado})
 
-# 🔹 Endpoint para confirmar pagos (diseñadora)
+# 🔹 Endpoint para confirmar pagos
 @app.route("/confirmar_pago", methods=["POST"])
 def confirmar_pago():
     data = request.get_json()
@@ -82,7 +82,7 @@ def confirmar_pago():
     resultado = actualizar_finanzas(nombre, celular, ambientes, total_cotizado, monto_pagado)
     return jsonify({"status": "confirmado", "resultado": resultado})
 
-# 🔹 Healthcheck rápido (opcional)
+# 🔹 Healthcheck rápido
 @app.route("/", methods=["GET"])
 def healthcheck():
     return jsonify({"status": "Backend activo"})
