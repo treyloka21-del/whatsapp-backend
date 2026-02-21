@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account  # 🔹 Librería moderna
 import pandas as pd
 import os
 
@@ -8,24 +8,31 @@ app = Flask(__name__)
 
 # 🔹 Configurar Google Sheets
 scope = [
-    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Ruta al JSON de tu Service Account
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-client = gspread.authorize(creds)
+# Ruta al JSON (En Render está en la raíz según configuramos)
+ruta_json = "credentials.json"
 
-# 🔹 Definir hojas de Google Sheets
-hoja_finanzas = client.open("Nombre_de_tu_sheets").worksheet("Hoja1")       # Estado financiero
-hoja_cotizaciones = client.open("Nombre_de_tu_sheets").worksheet("Hoja5")   # Historial cotizaciones
+try:
+    creds = service_account.Credentials.from_service_account_file(ruta_json, scopes=scope)
+    client = gspread.authorize(creds)
+    
+    # 🔹 Definir hojas de Google Sheets (CAMBIA LOS NOMBRES AQUÍ)
+    nombre_documento = "Nombre_de_tu_sheets" 
+    hoja_finanzas = client.open(nombre_documento).worksheet("Hoja1")
+    hoja_cotizaciones = client.open(nombre_documento).worksheet("Hoja5")
+    print("Conexión con Google Sheets exitosa")
+except Exception as e:
+    print(f"Error conectando a Google Sheets: {e}")
 
 # 🔹 Función para guardar pagos pendientes
 def guardar_pago_pendiente(nombre, celular, ambientes, total_cotizado, monto_pagado, voucher_url=None):
     hoja_cotizaciones.append_row([nombre, celular, ambientes, total_cotizado, monto_pagado, "Pendiente", voucher_url])
     return {"status": "pendiente", "nombre": nombre}
 
-# 🔹 Función para actualizar finanzas después de confirmación
+# 🔹 Función para actualizar finanzas
 def actualizar_finanzas(nombre, celular, ambientes, total_cotizado, monto_pagado):
     total = float(total_cotizado)
     deposito = float(monto_pagado)
@@ -51,11 +58,9 @@ def actualizar_finanzas(nombre, celular, ambientes, total_cotizado, monto_pagado
 
     return {"nombre": nombre, "total": total, "deposito": deposito, "saldo": saldo, "estado": estado}
 
-# 🔹 Endpoint para recibir pagos pendientes (desde WhatsApp/n8n)
 @app.route("/webhook_pago", methods=["POST"])
 def webhook_pago():
     data = request.get_json()
-
     nombre = data.get("nombre")
     celular = data.get("celular")
     ambientes = data.get("ambientes")
@@ -69,7 +74,6 @@ def webhook_pago():
     resultado = guardar_pago_pendiente(nombre, celular, ambientes, total_cotizado, monto_pagado, voucher_url)
     return jsonify({"status": "ok", "resultado": resultado})
 
-# 🔹 Endpoint para confirmar pagos
 @app.route("/confirmar_pago", methods=["POST"])
 def confirmar_pago():
     data = request.get_json()
@@ -82,12 +86,10 @@ def confirmar_pago():
     resultado = actualizar_finanzas(nombre, celular, ambientes, total_cotizado, monto_pagado)
     return jsonify({"status": "confirmado", "resultado": resultado})
 
-# 🔹 Healthcheck rápido
 @app.route("/", methods=["GET"])
 def healthcheck():
     return jsonify({"status": "Backend activo"})
 
-# 🔹 Ejecutar app en Render
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
