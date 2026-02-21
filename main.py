@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 # Configuración de Evolution API (Variables de Entorno)
 # Asegúrate de tener estas variables en Render -> Environment
-EVOLUTION_URL = os.environ.get("EVOLUTION_API_URL", "https://api-whatsapp-pro.onrender.com")
+EVOLUTION_URL = os.environ.get("EVOLUTION_API_URL", "https://api-whatsapp-pro-v2.onrender.com")
 EVOLUTION_KEY = os.environ.get("AUTHENTICATION_API_KEY", "tu_clave_aqui")
 INSTANCE_NAME = "tu_instancia" # Cámbialo por el nombre que le pongas en la API
 
