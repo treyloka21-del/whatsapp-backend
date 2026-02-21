@@ -13,7 +13,7 @@ scope = [
 ]
 
 # Ruta al JSON de tu Service Account
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials/credentials.json", scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
 
 # 🔹 Definir hojas de Google Sheets
