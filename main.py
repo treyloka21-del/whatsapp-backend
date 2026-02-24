@@ -66,16 +66,13 @@ def confirmar_pago():
         distrito = data.get("Distrito", data.get("distrito", "No especificado"))
         
         # --- PROCESAMIENTO DE AMBIENTES (LISTA) ---
-        # Si viene un solo ambiente, lo convertimos en lista para que el código no falle
         proyectos_raw = data.get("proyectos", [])
         if not proyectos_raw:
-            # Soporte para el formato antiguo de un solo ambiente
             amb_unico = data.get("Ambiente", data.get("ambiente"))
             m2_unico = data.get("m2", data.get("M2"))
             if amb_unico:
                 proyectos_raw = [{"ambiente": amb_unico, "m2": m2_unico}]
 
-        # Conectar al documento
         doc = gc.open("Cotizaciones")
         h3 = doc.worksheet("Hoja3") # Precios
         h1 = doc.worksheet("Hoja1") # Saldos
@@ -87,7 +84,7 @@ def confirmar_pago():
         df_precios['RangoMax'] = pd.to_numeric(df_precios['RangoMax'], errors='coerce')
         df_precios['Precio'] = pd.to_numeric(df_precios['Precio'], errors='coerce')
 
-        subtotal_acumulado = 0
+        subtotal_acumulado = 0.0
         detalles_lista = []
         nombres_ambientes = []
 
@@ -99,6 +96,7 @@ def confirmar_pago():
             except:
                 m2_valor = 0.0
 
+            # Búsqueda exacta del ambiente y el rango de m2
             match = df_precios[
                 (df_precios['Ambiente'].astype(str).str.strip().str.lower() == amb_nombre.lower()) & 
                 (df_precios['RangoMin'] <= m2_valor) & 
@@ -111,19 +109,27 @@ def confirmar_pago():
                 detalles_lista.append(f"✅ *{amb_nombre}* ({m2_valor}m2): S/ {precio_fila:.2f}")
                 nombres_ambientes.append(amb_nombre)
                 
-                # Registro individual en Historial (Hoja 5)
-                h5.append_row([nombre, distrito, amb_nombre, m2_valor, precio_fila])
+                # Registro en Hoja 5 (Historial) - Forzamos float para evitar errores en Excel
+                h5.append_row([nombre, distrito, amb_nombre, float(m2_valor), float(precio_fila)])
 
         if not detalles_lista:
             return jsonify({"error": "No se encontró ningún ambiente válido para cotizar"}), 404
 
-        # --- CÁLCULOS FINALES ---
-        igv = subtotal_acumulado * 0.18
-        total_final = subtotal_acumulado + igv
+        # --- CÁLCULOS FINALES (CORREGIDOS) ---
+        igv = round(subtotal_acumulado * 0.18, 2)
+        total_final = round(subtotal_acumulado + igv, 2)
         lista_ambientes_str = ", ".join(nombres_ambientes)
 
-        # Registro único en Hoja 1 (Resumen de deuda)
-        h1.append_row([nombre, celular, f"Cotización: {lista_ambientes_str}", total_final, 0, total_final, "Pendiente"])
+        # Registro único en Hoja 1 - Enviamos números como float puro para evitar el "106200"
+        h1.append_row([
+            nombre, 
+            str(celular), 
+            f"Cotización: {lista_ambientes_str}", 
+            float(total_final), 
+            0.0, 
+            float(total_final), 
+            "Pendiente"
+        ])
 
         # --- MENSAJE DE WHATSAPP ---
         resumen_texto = "\n".join(detalles_lista)
