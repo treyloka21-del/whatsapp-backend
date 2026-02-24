@@ -60,69 +60,87 @@ def confirmar_pago():
     try:
         data = request.get_json()
         
-        # --- CAPTURA DE DATOS ---
+        # --- CAPTURA DE DATOS DEL CLIENTE ---
         nombre = data.get("Nombre", data.get("nombre", "Sin Nombre"))
         celular = data.get("Celular", data.get("celular", ""))
         distrito = data.get("Distrito", data.get("distrito", "No especificado"))
-        ambiente_solicitado = data.get("Ambiente", data.get("ambiente", ""))
-        m2_raw = data.get("m2", data.get("M2", 0))
         
-        # Convertir m2 de n8n a número
-        try:
-            m2_solicitado = float(m2_raw)
-        except:
-            m2_solicitado = 0.0
+        # --- PROCESAMIENTO DE AMBIENTES (LISTA) ---
+        # Si viene un solo ambiente, lo convertimos en lista para que el código no falle
+        proyectos_raw = data.get("proyectos", [])
+        if not proyectos_raw:
+            # Soporte para el formato antiguo de un solo ambiente
+            amb_unico = data.get("Ambiente", data.get("ambiente"))
+            m2_unico = data.get("m2", data.get("M2"))
+            if amb_unico:
+                proyectos_raw = [{"ambiente": amb_unico, "m2": m2_unico}]
 
         # Conectar al documento
         doc = gc.open("Cotizaciones")
-        h3 = doc.worksheet("Hoja3") # Precios y Rangos
-        h1 = doc.worksheet("Hoja1") # Saldos de Clientes
-        h5 = doc.worksheet("Hoja5") # Historial de Cotizaciones
+        h3 = doc.worksheet("Hoja3") # Precios
+        h1 = doc.worksheet("Hoja1") # Saldos
+        h5 = doc.worksheet("Hoja5") # Historial
 
-        # --- LÓGICA DE BÚSQUEDA BLINDADA ---
         df_precios = pd.DataFrame(h3.get_all_records())
-        
-        # 1. Limpiar espacios en nombres de columnas
         df_precios.columns = df_precios.columns.str.strip()
-
-        # 2. Forzar conversión a números de las columnas críticas
         df_precios['RangoMin'] = pd.to_numeric(df_precios['RangoMin'], errors='coerce')
         df_precios['RangoMax'] = pd.to_numeric(df_precios['RangoMax'], errors='coerce')
         df_precios['Precio'] = pd.to_numeric(df_precios['Precio'], errors='coerce')
 
-        # 3. Filtrar ignorando mayúsculas/espacios y comparando números
-        match = df_precios[
-            (df_precios['Ambiente'].astype(str).str.strip().str.lower() == ambiente_solicitado.lower()) & 
-            (df_precios['RangoMin'] <= m2_solicitado) & 
-            (df_precios['RangoMax'] >= m2_solicitado)
-        ]
+        subtotal_acumulado = 0
+        detalles_lista = []
+        nombres_ambientes = []
 
-        if match.empty:
-            return jsonify({"error": f"No se encontró rango para {ambiente_solicitado} con {m2_solicitado}m2"}), 404
+        # --- CICLO PARA EVALUAR CADA AMBIENTE ---
+        for p in proyectos_raw:
+            amb_nombre = p.get("ambiente", "").strip()
+            try:
+                m2_valor = float(p.get("m2", 0))
+            except:
+                m2_valor = 0.0
 
-        # Obtener precio y calcular
-        precio_base = float(match.iloc[0]['Precio'])
-        igv = precio_base * 0.18
-        total = precio_base + igv
+            match = df_precios[
+                (df_precios['Ambiente'].astype(str).str.strip().str.lower() == amb_nombre.lower()) & 
+                (df_precios['RangoMin'] <= m2_valor) & 
+                (df_precios['RangoMax'] >= m2_valor)
+            ]
 
-        # --- REGISTRO EN HOJAS ---
-        h1.append_row([nombre, celular, f"Cotización {ambiente_solicitado}", total, 0, total, "Pendiente"])
-        h5.append_row([nombre, distrito, ambiente_solicitado, m2_solicitado, total])
+            if not match.empty:
+                precio_fila = float(match.iloc[0]['Precio'])
+                subtotal_acumulado += precio_fila
+                detalles_lista.append(f"✅ *{amb_nombre}* ({m2_valor}m2): S/ {precio_fila:.2f}")
+                nombres_ambientes.append(amb_nombre)
+                
+                # Registro individual en Historial (Hoja 5)
+                h5.append_row([nombre, distrito, amb_nombre, m2_valor, precio_fila])
 
-        # --- ENVÍO DE WHATSAPP ---
+        if not detalles_lista:
+            return jsonify({"error": "No se encontró ningún ambiente válido para cotizar"}), 404
+
+        # --- CÁLCULOS FINALES ---
+        igv = subtotal_acumulado * 0.18
+        total_final = subtotal_acumulado + igv
+        lista_ambientes_str = ", ".join(nombres_ambientes)
+
+        # Registro único en Hoja 1 (Resumen de deuda)
+        h1.append_row([nombre, celular, f"Cotización: {lista_ambientes_str}", total_final, 0, total_final, "Pendiente"])
+
+        # --- MENSAJE DE WHATSAPP ---
+        resumen_texto = "\n".join(detalles_lista)
         mensaje_cot = (
             f"¡Hola {nombre}! ✨\n\n"
-            f"Hemos generado tu cotización para: *{ambiente_solicitado}*\n"
-            f"📐 Área: {m2_solicitado} m2\n"
-            f"📍 Distrito: {distrito}\n\n"
-            f"💰 Subtotal: S/ {precio_base:.2f}\n"
+            f"Aquí tienes el presupuesto detallado para tus espacios:\n\n"
+            f"{resumen_texto}\n\n"
+            f"--------------------------\n"
+            f"💰 Subtotal: S/ {subtotal_acumulado:.2f}\n"
             f"📝 IGV (18%): S/ {igv:.2f}\n"
-            f"💵 *TOTAL: S/ {total:.2f}*\n\n"
-            f"Nuestra diseñadora revisará tu caso. Si deseas proceder, confírmanos por aquí. 🚀"
+            f"💵 *TOTAL: S/ {total_final:.2f}*\n\n"
+            f"📍 Distrito: {distrito}\n\n"
+            f"¿Deseas que agendemos una visita técnica para validar los espacios? 🚀"
         )
         enviar_whatsapp(celular, mensaje_cot)
 
-        return jsonify({"status": "Procesado con éxito", "total": total})
+        return jsonify({"status": "Multi-cotización exitosa", "total": total_final})
 
     except Exception as e:
         print(f"❌ Error en Proceso: {e}")
