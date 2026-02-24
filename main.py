@@ -60,44 +60,53 @@ def confirmar_pago():
     try:
         data = request.get_json()
         
-        # --- BLOQUE BLINDADO: Captura datos sin importar mayúsculas ---
+        # --- CAPTURA DE DATOS ---
         nombre = data.get("Nombre", data.get("nombre", "Sin Nombre"))
         celular = data.get("Celular", data.get("celular", ""))
         distrito = data.get("Distrito", data.get("distrito", "No especificado"))
         ambiente_solicitado = data.get("Ambiente", data.get("ambiente", ""))
         m2_raw = data.get("m2", data.get("M2", 0))
-        m2_solicitado = float(m2_raw)
-
-        # Conectar al documento (Asegúrate que el nombre sea exacto)
-        doc = gc.open("Cotizaciones")
         
-        # --- REFERENCIA A HOJAS (SIN ESPACIOS) ---
+        # Convertir m2 de n8n a número
+        try:
+            m2_solicitado = float(m2_raw)
+        except:
+            m2_solicitado = 0.0
+
+        # Conectar al documento
+        doc = gc.open("Cotizaciones")
         h3 = doc.worksheet("Hoja3") # Precios y Rangos
         h1 = doc.worksheet("Hoja1") # Saldos de Clientes
         h5 = doc.worksheet("Hoja5") # Historial de Cotizaciones
 
-        # --- LÓGICA DE BÚSQUEDA EN HOJA3 ---
+        # --- LÓGICA DE BÚSQUEDA BLINDADA ---
         df_precios = pd.DataFrame(h3.get_all_records())
         
-        # Filtro inteligente: ignora mayúsculas en 'Ambiente' y busca el rango de m2
+        # 1. Limpiar espacios en nombres de columnas
+        df_precios.columns = df_precios.columns.str.strip()
+
+        # 2. Forzar conversión a números de las columnas críticas
+        df_precios['RangoMin'] = pd.to_numeric(df_precios['RangoMin'], errors='coerce')
+        df_precios['RangoMax'] = pd.to_numeric(df_precios['RangoMax'], errors='coerce')
+        df_precios['Precio'] = pd.to_numeric(df_precios['Precio'], errors='coerce')
+
+        # 3. Filtrar ignorando mayúsculas/espacios y comparando números
         match = df_precios[
-            (df_precios['Ambiente'].astype(str).str.lower() == ambiente_solicitado.lower()) & 
+            (df_precios['Ambiente'].astype(str).str.strip().str.lower() == ambiente_solicitado.lower()) & 
             (df_precios['RangoMin'] <= m2_solicitado) & 
             (df_precios['RangoMax'] >= m2_solicitado)
         ]
 
         if match.empty:
-            return jsonify({"error": f"No se encontró precio para {ambiente_solicitado} de {m2_solicitado}m2"}), 404
+            return jsonify({"error": f"No se encontró rango para {ambiente_solicitado} con {m2_solicitado}m2"}), 404
 
+        # Obtener precio y calcular
         precio_base = float(match.iloc[0]['Precio'])
         igv = precio_base * 0.18
         total = precio_base + igv
 
         # --- REGISTRO EN HOJAS ---
-        # Registro en Hoja1: Nombre, Celular, Detalle, Total, Deposito(0), Saldo(Total), Estado
         h1.append_row([nombre, celular, f"Cotización {ambiente_solicitado}", total, 0, total, "Pendiente"])
-
-        # Registro en Hoja5: Nombre, Distrito, Ambiente, m2, Total
         h5.append_row([nombre, distrito, ambiente_solicitado, m2_solicitado, total])
 
         # --- ENVÍO DE WHATSAPP ---
