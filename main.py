@@ -70,9 +70,9 @@ def confirmar_pago():
 
         # Conectar al documento (Asegúrate que el nombre sea exacto)
         doc = gc.open("Cotizaciones")
-        h3 = doc.worksheet("Hoja 3") # Precios y Rangos
-        h1 = doc.worksheet("Hoja 1") # Saldos de Clientes
-        h5 = doc.worksheet("Hoja 5") # Historial de Cotizaciones
+        h3 = doc.worksheet("Hoja3") # Precios y Rangos
+        h1 = doc.worksheet("Hoja1") # Saldos de Clientes
+        h5 = doc.worksheet("Hoja5") # Historial de Cotizaciones
 
         # --- LÓGICA DE BÚSQUEDA EN HOJA 3 ---
         df_precios = pd.DataFrame(h3.get_all_records())
