@@ -70,11 +70,13 @@ def confirmar_pago():
 
         # Conectar al documento (Asegúrate que el nombre sea exacto)
         doc = gc.open("Cotizaciones")
+        
+        # --- REFERENCIA A HOJAS (SIN ESPACIOS) ---
         h3 = doc.worksheet("Hoja3") # Precios y Rangos
         h1 = doc.worksheet("Hoja1") # Saldos de Clientes
         h5 = doc.worksheet("Hoja5") # Historial de Cotizaciones
 
-        # --- LÓGICA DE BÚSQUEDA EN HOJA 3 ---
+        # --- LÓGICA DE BÚSQUEDA EN HOJA3 ---
         df_precios = pd.DataFrame(h3.get_all_records())
         
         # Filtro inteligente: ignora mayúsculas en 'Ambiente' y busca el rango de m2
@@ -92,10 +94,10 @@ def confirmar_pago():
         total = precio_base + igv
 
         # --- REGISTRO EN HOJAS ---
-        # Registro en Hoja 1: Nombre, Celular, Detalle, Total, Deposito(0), Saldo(Total), Estado
+        # Registro en Hoja1: Nombre, Celular, Detalle, Total, Deposito(0), Saldo(Total), Estado
         h1.append_row([nombre, celular, f"Cotización {ambiente_solicitado}", total, 0, total, "Pendiente"])
 
-        # Registro en Hoja 5: Nombre, Distrito, Ambiente, m2, Total
+        # Registro en Hoja5: Nombre, Distrito, Ambiente, m2, Total
         h5.append_row([nombre, distrito, ambiente_solicitado, m2_solicitado, total])
 
         # --- ENVÍO DE WHATSAPP ---
