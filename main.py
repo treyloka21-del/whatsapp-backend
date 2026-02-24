@@ -13,6 +13,7 @@ EVOLUTION_KEY = os.environ.get("AUTHENTICATION_API_KEY", "trey123")
 INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "tu_instancia") 
 
 def enviar_whatsapp(numero, mensaje):
+    """Envía mensaje de texto a través de Evolution API"""
     try:
         numero_limpio = "".join(filter(str.isdigit, str(numero)))
         if len(numero_limpio) == 9: 
@@ -33,6 +34,7 @@ def enviar_whatsapp(numero, mensaje):
 
 # --- CONFIGURACIÓN DE GOOGLE SHEETS ---
 def obtener_conexion_sheets():
+    """Establece conexión con Google Sheets usando variables de entorno"""
     try:
         pk = os.environ.get("GOOGLE_PRIVATE_KEY").strip('"').replace("\\n", "\n")
         email = os.environ.get("GOOGLE_CLIENT_EMAIL")
@@ -49,7 +51,7 @@ def obtener_conexion_sheets():
         print(f"❌ Error Conexión Sheets: {e}")
         return None
 
-# --- RUTA PRINCIPAL (RECIBE DE N8N) ---
+# --- RUTA QUE RECIBE DE N8N ---
 @app.route("/confirmar_pago", methods=["POST"])
 def confirmar_pago():
     gc = obtener_conexion_sheets()
@@ -57,40 +59,46 @@ def confirmar_pago():
     
     try:
         data = request.get_json()
-        nombre = data.get("Nombre", "Sin Nombre")
-        celular = data.get("Celular", "")
-        distrito = data.get("Distrito", "No especificado")
-        ambiente_solicitado = data.get("Ambiente", "")
-        m2_solicitado = float(data.get("m2", 0))
+        
+        # --- BLOQUE BLINDADO: Captura datos sin importar mayúsculas ---
+        nombre = data.get("Nombre", data.get("nombre", "Sin Nombre"))
+        celular = data.get("Celular", data.get("celular", ""))
+        distrito = data.get("Distrito", data.get("distrito", "No especificado"))
+        ambiente_solicitado = data.get("Ambiente", data.get("ambiente", ""))
+        m2_raw = data.get("m2", data.get("M2", 0))
+        m2_solicitado = float(m2_raw)
 
+        # Conectar al documento (Asegúrate que el nombre sea exacto)
         doc = gc.open("Cotizaciones")
-        h3 = doc.worksheet("Hoja 3") # Precios
-        h1 = doc.worksheet("Hoja 1") # Clientes/Saldos
-        h5 = doc.worksheet("Hoja 5") # Historial/Registro
+        h3 = doc.worksheet("Hoja 3") # Precios y Rangos
+        h1 = doc.worksheet("Hoja 1") # Saldos de Clientes
+        h5 = doc.worksheet("Hoja 5") # Historial de Cotizaciones
 
-        # 1. Buscar Precio en Hoja 3 por Ambiente y Rango m2
+        # --- LÓGICA DE BÚSQUEDA EN HOJA 3 ---
         df_precios = pd.DataFrame(h3.get_all_records())
-        # Filtramos: mismo ambiente y que los m2 estén entre Min y Max
+        
+        # Filtro inteligente: ignora mayúsculas en 'Ambiente' y busca el rango de m2
         match = df_precios[
-            (df_precios['Ambiente'] == ambiente_solicitado) & 
+            (df_precios['Ambiente'].astype(str).str.lower() == ambiente_solicitado.lower()) & 
             (df_precios['RangoMin'] <= m2_solicitado) & 
             (df_precios['RangoMax'] >= m2_solicitado)
         ]
 
         if match.empty:
-            return jsonify({"error": "No se encontró un rango de precio para esos m2"}), 404
+            return jsonify({"error": f"No se encontró precio para {ambiente_solicitado} de {m2_solicitado}m2"}), 404
 
         precio_base = float(match.iloc[0]['Precio'])
         igv = precio_base * 0.18
         total = precio_base + igv
 
-        # 2. Registro en Hoja 1 (Saldos)
-        h1.append_row([nombre, celular, ambiente_solicitado, total, 0, total, "Pendiente"])
+        # --- REGISTRO EN HOJAS ---
+        # Registro en Hoja 1: Nombre, Celular, Detalle, Total, Deposito(0), Saldo(Total), Estado
+        h1.append_row([nombre, celular, f"Cotización {ambiente_solicitado}", total, 0, total, "Pendiente"])
 
-        # 3. Registro en Hoja 5 (Detalle)
+        # Registro en Hoja 5: Nombre, Distrito, Ambiente, m2, Total
         h5.append_row([nombre, distrito, ambiente_solicitado, m2_solicitado, total])
 
-        # 4. Enviar WhatsApp con Cotización
+        # --- ENVÍO DE WHATSAPP ---
         mensaje_cot = (
             f"¡Hola {nombre}! ✨\n\n"
             f"Hemos generado tu cotización para: *{ambiente_solicitado}*\n"
@@ -99,11 +107,11 @@ def confirmar_pago():
             f"💰 Subtotal: S/ {precio_base:.2f}\n"
             f"📝 IGV (18%): S/ {igv:.2f}\n"
             f"💵 *TOTAL: S/ {total:.2f}*\n\n"
-            f"Para iniciar el diseño, se requiere un depósito inicial. ¡Quedamos atentos! 🚀"
+            f"Nuestra diseñadora revisará tu caso. Si deseas proceder, confírmanos por aquí. 🚀"
         )
         enviar_whatsapp(celular, mensaje_cot)
 
-        return jsonify({"status": "Cotización procesada", "total": total})
+        return jsonify({"status": "Procesado con éxito", "total": total})
 
     except Exception as e:
         print(f"❌ Error en Proceso: {e}")
