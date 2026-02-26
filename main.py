@@ -59,7 +59,7 @@ def leer_y_limpiar_excel():
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Servidor Cotizador Activo ✅", 200
+    return "SOY EL NUEVO CODIGO 🚀", 2000
 
 @app.route('/confirmar_pago', methods=['POST'])
 def confirmar_pago():
