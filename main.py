@@ -51,6 +51,12 @@ def obtener_conexion_sheets():
         print(f"❌ Error Conexión Sheets: {e}")
         return None
 
+# --- RUTA DE SALUD (FUNDAMENTAL PARA UPTIMEROBOT) ---
+@app.route("/", methods=["GET"])
+def home():
+    """Esta ruta mantiene el servidor despierto y confirma que funciona"""
+    return "Servidor de Cotizaciones Activo 🚀", 200
+
 # --- RUTA QUE RECIBE DE N8N ---
 @app.route("/confirmar_pago", methods=["POST"])
 def confirmar_pago():
@@ -109,18 +115,18 @@ def confirmar_pago():
                 detalles_lista.append(f"✅ *{amb_nombre}* ({m2_valor}m2): S/ {precio_fila:.2f}")
                 nombres_ambientes.append(amb_nombre)
                 
-                # Registro en Hoja 5 (Historial) - Forzamos float para evitar errores en Excel
+                # Registro en Hoja 5 (Historial)
                 h5.append_row([nombre, distrito, amb_nombre, float(m2_valor), float(precio_fila)])
 
         if not detalles_lista:
             return jsonify({"error": "No se encontró ningún ambiente válido para cotizar"}), 404
 
-        # --- CÁLCULOS FINALES (CORREGIDOS) ---
+        # --- CÁLCULOS FINALES ---
         igv = round(subtotal_acumulado * 0.18, 2)
         total_final = round(subtotal_acumulado + igv, 2)
         lista_ambientes_str = ", ".join(nombres_ambientes)
 
-        # Registro único en Hoja 1 - Enviamos números como float puro para evitar el "106200"
+        # Registro único en Hoja 1
         h1.append_row([
             nombre, 
             str(celular), 
