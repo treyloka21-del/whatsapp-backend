@@ -4,6 +4,8 @@ from google.oauth2 import service_account
 import pandas as pd
 import os
 import requests
+import re
+import unicodedata
 
 app = Flask(__name__)
 
@@ -13,7 +15,6 @@ EVOLUTION_KEY = os.environ.get("AUTHENTICATION_API_KEY", "trey123")
 INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "tu_instancia") 
 
 def enviar_whatsapp(numero, mensaje):
-    """Envía mensaje de texto a través de Evolution API"""
     try:
         numero_limpio = "".join(filter(str.isdigit, str(numero)))
         if len(numero_limpio) == 9: 
@@ -32,9 +33,7 @@ def enviar_whatsapp(numero, mensaje):
         print(f"❌ Error WhatsApp: {e}")
         return False
 
-# --- CONFIGURACIÓN DE GOOGLE SHEETS ---
 def obtener_conexion_sheets():
-    """Establece conexión con Google Sheets usando variables de entorno"""
     try:
         pk = os.environ.get("GOOGLE_PRIVATE_KEY").strip('"').replace("\\n", "\n")
         email = os.environ.get("GOOGLE_CLIENT_EMAIL")
@@ -51,13 +50,16 @@ def obtener_conexion_sheets():
         print(f"❌ Error Conexión Sheets: {e}")
         return None
 
-# --- RUTA DE SALUD (FUNDAMENTAL PARA UPTIMEROBOT) ---
+def normalizar_texto(texto):
+    """Elimina tildes y convierte a minúsculas para comparaciones exactas"""
+    if not texto: return ""
+    texto = str(texto).strip().lower()
+    return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+
 @app.route("/", methods=["GET"])
 def home():
-    """Esta ruta mantiene el servidor despierto y confirma que funciona"""
     return "Servidor de Cotizaciones Activo 🚀", 200
 
-# --- RUTA QUE RECIBE DE N8N ---
 @app.route("/confirmar_pago", methods=["POST"])
 def confirmar_pago():
     gc = obtener_conexion_sheets()
@@ -65,94 +67,86 @@ def confirmar_pago():
     
     try:
         data = request.get_json()
-        
-        # --- CAPTURA DE DATOS DEL CLIENTE ---
-        nombre = data.get("Nombre", data.get("nombre", "Sin Nombre"))
-        celular = data.get("Celular", data.get("celular", ""))
-        distrito = data.get("Distrito", data.get("distrito", "No especificado"))
-        
-        # --- PROCESAMIENTO DE AMBIENTES (LISTA) ---
+        nombre = data.get("nombre", "Sin Nombre")
+        celular = data.get("celular", "")
+        distrito = data.get("distrito", "No especificado")
         proyectos_raw = data.get("proyectos", [])
-        if not proyectos_raw:
-            amb_unico = data.get("Ambiente", data.get("ambiente"))
-            m2_unico = data.get("m2", data.get("M2"))
-            if amb_unico:
-                proyectos_raw = [{"ambiente": amb_unico, "m2": m2_unico}]
 
         doc = gc.open("Cotizaciones")
         h3 = doc.worksheet("Hoja3") # Precios
         h1 = doc.worksheet("Hoja1") # Saldos
         h5 = doc.worksheet("Hoja5") # Historial
 
+        # --- PROCESAMIENTO DE DATOS DEL EXCEL ---
         df_precios = pd.DataFrame(h3.get_all_records())
         df_precios.columns = df_precios.columns.str.strip()
+        
+        # Limpieza profunda de la columna Precio (quita S/, comas, espacios)
+        df_precios['Precio'] = df_precios['Precio'].replace(r'[S/,\s]', '', regex=True)
+        df_precios['Precio'] = pd.to_numeric(df_precios['Precio'], errors='coerce')
+        
         df_precios['RangoMin'] = pd.to_numeric(df_precios['RangoMin'], errors='coerce')
         df_precios['RangoMax'] = pd.to_numeric(df_precios['RangoMax'], errors='coerce')
-        df_precios['Precio'] = pd.to_numeric(df_precios['Precio'], errors='coerce')
 
         subtotal_acumulado = 0.0
-        detalles_lista = []
+        detalles_para_ia = []
         nombres_ambientes = []
 
         # --- CICLO PARA EVALUAR CADA AMBIENTE ---
         for p in proyectos_raw:
             amb_nombre = p.get("ambiente", "").strip()
-            try:
-                m2_valor = float(p.get("m2", 0))
-            except:
-                m2_valor = 0.0
+            m2_valor = float(p.get("m2", 0))
 
-            # Búsqueda exacta del ambiente y el rango de m2
+            # Búsqueda robusta ignorando tildes y mayúsculas
             match = df_precios[
-                (df_precios['Ambiente'].astype(str).str.strip().str.lower() == amb_nombre.lower()) & 
+                (df_precios['Ambiente'].apply(normalizar_texto) == normalizar_texto(amb_nombre)) & 
                 (df_precios['RangoMin'] <= m2_valor) & 
                 (df_precios['RangoMax'] >= m2_valor)
             ]
 
             if not match.empty:
-                precio_fila = float(match.iloc[0]['Precio'])
-                subtotal_acumulado += precio_fila
-                detalles_lista.append(f"✅ *{amb_nombre}* ({m2_valor}m2): S/ {precio_fila:.2f}")
+                precio_encontrado = float(match.iloc[0]['Precio'])
+                subtotal_acumulado += precio_encontrado
+                
+                linea_detalle = f"{amb_nombre.upper()} ({m2_valor} m2) = S/ {precio_encontrado:.2f}"
+                detalles_para_ia.append(linea_detalle)
                 nombres_ambientes.append(amb_nombre)
                 
-                # Registro en Hoja 5 (Historial)
-                h5.append_row([nombre, distrito, amb_nombre, float(m2_valor), float(precio_fila)])
+                # Registro en Hoja 5
+                h5.append_row([nombre, distrito, amb_nombre, m2_valor, precio_encontrado])
 
-        if not detalles_lista:
-            return jsonify({"error": "No se encontró ningún ambiente válido para cotizar"}), 404
+        if not detalles_para_ia:
+            return jsonify({"error": f"No se encontró precio para {amb_nombre} con {m2_valor} m2"}), 404
 
         # --- CÁLCULOS FINALES ---
         igv = round(subtotal_acumulado * 0.18, 2)
         total_final = round(subtotal_acumulado + igv, 2)
-        lista_ambientes_str = ", ".join(nombres_ambientes)
 
         # Registro único en Hoja 1
-        h1.append_row([
-            nombre, 
-            str(celular), 
-            f"Cotización: {lista_ambientes_str}", 
-            float(total_final), 
-            0.0, 
-            float(total_final), 
-            "Pendiente"
-        ])
+        h1.append_row([nombre, str(celular), ", ".join(nombres_ambientes), total_final, 0.0, total_final, "Pendiente"])
 
         # --- MENSAJE DE WHATSAPP ---
-        resumen_texto = "\n".join(detalles_lista)
+        resumen_wsp = "\n".join([f"✅ *{d}*" for d in detalles_para_ia])
         mensaje_cot = (
-            f"¡Hola {nombre}! ✨\n\n"
-            f"Aquí tienes el presupuesto detallado para tus espacios:\n\n"
-            f"{resumen_texto}\n\n"
-            f"--------------------------\n"
+            f"¡Hola {nombre}! ✨\n\nAquí tienes el presupuesto detallado:\n\n"
+            f"{resumen_wsp}\n\n"
             f"💰 Subtotal: S/ {subtotal_acumulado:.2f}\n"
             f"📝 IGV (18%): S/ {igv:.2f}\n"
             f"💵 *TOTAL: S/ {total_final:.2f}*\n\n"
-            f"📍 Distrito: {distrito}\n\n"
-            f"¿Deseas que agendemos una visita técnica para validar los espacios? 🚀"
+            f"📍 Distrito: {distrito}\n\n¿Deseas agendar una visita técnica? 🚀"
         )
         enviar_whatsapp(celular, mensaje_cot)
 
-        return jsonify({"status": "Multi-cotización exitosa", "total": total_final})
+        # --- RESPUESTA PARA LA IA ---
+        return jsonify({
+            "status": "success",
+            "nombre": nombre,
+            "distrito": distrito,
+            "detalles": detalles_para_ia,
+            "subtotal": subtotal_acumulado,
+            "igv": igv,
+            "total": total_final
+        })
 
     except Exception as e:
         print(f"❌ Error en Proceso: {e}")
