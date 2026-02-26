@@ -15,7 +15,6 @@ def conectar_google():
     if not pk or not email:
         raise ValueError("Faltan variables GOOGLE_PRIVATE_KEY o GOOGLE_CLIENT_EMAIL en Render")
 
-    # Reparamos la llave para evitar errores de PEM
     pk_limpia = pk.replace('\\n', '\n')
     info = {
         "type": "service_account",
@@ -27,7 +26,6 @@ def conectar_google():
     creds = Credentials.from_service_account_info(info, scopes=scope)
     return gspread.authorize(creds)
 
-# Inicialización de la conexión
 client = None
 try:
     client = conectar_google()
@@ -42,23 +40,19 @@ def leer_y_limpiar_excel():
     if client is None:
         client = conectar_google()
         
-    # Accedemos específicamente a la Hoja3
     sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Hoja3")
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    # Función robusta para limpiar formatos de moneda peruanos (Ej: "1.040,00" -> 1040.0)
     def limpiar_numero(valor):
         if valor is None or valor == "": return 0.0
         valor_str = str(valor).strip()
-        # Quitamos puntos de miles y cambiamos coma decimal por punto
         valor_str = valor_str.replace('.', '').replace(',', '.')
         try:
             return float(valor_str)
         except:
             return 0.0
 
-    # Aplicamos limpieza a las columnas críticas
     df['RangoMin'] = df['RangoMin'].apply(limpiar_numero)
     df['RangoMax'] = df['RangoMax'].apply(limpiar_numero)
     df['Precio'] = df['Precio'].apply(limpiar_numero)
@@ -67,44 +61,61 @@ def leer_y_limpiar_excel():
 
 @app.route('/', methods=['GET'])
 def home():
-    # Mensaje de control para saber que el código cambió
-    return "Servidor Cotizador ONLINE - Versión v2.0 🚀", 200
+    return "Servidor Cotizador ONLINE - Versión v2.1 (Numeración Activa) 🚀", 200
 
 @app.route('/confirmar_pago', methods=['POST'])
 def confirmar_pago():
     try:
         data = request.get_json()
+        
+        # --- CAPTURAMOS DATOS DEL CLIENTE ---
+        nombre_user = data.get('nombre', 'Cliente')
+        distrito_user = data.get('distrito', 'No especificado')
         proyectos = data.get('proyectos', [])
+        
         df = leer_y_limpiar_excel()
         
         subtotal = 0
         detalles = []
+        conteos = {} # Para llevar la cuenta de ambientes repetidos
 
         for p in proyectos:
             ambiente_user = str(p.get('ambiente', '')).strip().lower()
             m2_user = float(p.get('m2', 0))
 
-            # Filtrar por ambiente
-            df_amb = df[df['Ambiente'].str.strip().str.lower() == ambiente_user]
+            # --- LÓGICA DE NUMERACIÓN (SALA 1, SALA 2) ---
+            if ambiente_user not in conteos:
+                conteos[ambiente_user] = 1
+            else:
+                conteos[ambiente_user] += 1
             
-            # Buscar rango exacto
+            # Solo numeramos si hay más de uno del mismo tipo en el pedido total
+            total_de_este_tipo = sum(1 for x in proyectos if str(x.get('ambiente', '')).strip().lower() == ambiente_user)
+            
+            if total_de_este_tipo > 1:
+                label_ambiente = f"{ambiente_user.upper()} {conteos[ambiente_user]}"
+            else:
+                label_ambiente = ambiente_user.upper()
+
+            # --- BÚSQUEDA EN EXCEL ---
+            df_amb = df[df['Ambiente'].str.strip().str.lower() == ambiente_user]
             fila = df_amb[(df_amb['RangoMin'] <= m2_user) & (df_amb['RangoMax'] >= m2_user)]
 
             if not fila.empty:
-                # OBTENEMOS EL PRECIO FIJO DE LA TABLA
                 precio_fijo = float(fila.iloc[0]['Precio'])
-                
-                # IMPORTANTE: Aquí NO hay multiplicación por m2. Es suma directa.
                 subtotal += precio_fijo
-                detalles.append(f"{ambiente_user.upper()} ({m2_user} m2) = S/ {precio_fijo:,.2f}")
+                detalles.append(f"{label_ambiente} ({m2_user} m2) = S/ {precio_fijo:,.2f}")
             else:
-                detalles.append(f"No hay rango para {ambiente_user} con {m2_user} m2")
+                detalles.append(f"{label_ambiente} ({m2_user} m2) = No hay rango en tabla")
 
         igv = subtotal * 0.18
         total = subtotal + igv
 
+        # --- RESPUESTA CON NOMBRE Y DISTRITO ---
         return jsonify({
             "status": "success",
+            "cliente": nombre_user,
+            "distrito": distrito_user,
             "detalles": detalles,
             "subtotal": round(subtotal, 2),
             "igv": round(igv, 2),
@@ -116,6 +127,5 @@ def confirmar_pago():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
-    # Usamos el puerto que Render nos asigne o el 8080 por defecto
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
