@@ -3,6 +3,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 import os
+import json
 
 app = Flask(__name__)
 
@@ -61,23 +62,36 @@ def leer_y_limpiar_excel():
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Servidor Cotizador ONLINE - Versión v2.1 (Numeración Activa) 🚀", 200
+    return "Servidor Cotizador ONLINE - Versión v2.2 (Soporte Form-Data Activo) 🚀", 200
 
 @app.route('/confirmar_pago', methods=['POST'])
 def confirmar_pago():
     try:
-        data = request.get_json()
-        
+        # --- SOPORTE HÍBRIDO: JSON O FORM-DATA ---
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form
+
         # --- CAPTURAMOS DATOS DEL CLIENTE ---
         nombre_user = data.get('nombre', 'Cliente')
         distrito_user = data.get('distrito', 'No especificado')
-        proyectos = data.get('proyectos', [])
+        
+        # Manejo de Proyectos (convertir de texto a lista si es necesario)
+        proyectos_raw = data.get('proyectos', '[]')
+        if isinstance(proyectos_raw, str):
+            try:
+                proyectos = json.loads(proyectos_raw)
+            except:
+                proyectos = [] # Si falla el parseo, lista vacía
+        else:
+            proyectos = proyectos_raw
         
         df = leer_y_limpiar_excel()
         
         subtotal = 0
         detalles = []
-        conteos = {} # Para llevar la cuenta de ambientes repetidos
+        conteos = {} 
 
         for p in proyectos:
             ambiente_user = str(p.get('ambiente', '')).strip().lower()
@@ -89,7 +103,6 @@ def confirmar_pago():
             else:
                 conteos[ambiente_user] += 1
             
-            # Solo numeramos si hay más de uno del mismo tipo en el pedido total
             total_de_este_tipo = sum(1 for x in proyectos if str(x.get('ambiente', '')).strip().lower() == ambiente_user)
             
             if total_de_este_tipo > 1:
@@ -111,7 +124,6 @@ def confirmar_pago():
         igv = subtotal * 0.18
         total = subtotal + igv
 
-        # --- RESPUESTA CON NOMBRE Y DISTRITO ---
         return jsonify({
             "status": "success",
             "cliente": nombre_user,
