@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import os
 import json
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -38,57 +39,59 @@ SPREADSHEET_ID = "1os4j4fVMY8Jx07IXR9DD2RUgY1IK4HSLtQJH8B7z8Rw"
 
 def leer_y_limpiar_excel():
     global client
-    if client is None:
-        client = conectar_google()
-        
+    if client is None: client = conectar_google()
     sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Hoja3")
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
     def limpiar_numero(valor):
         if valor is None or valor == "": return 0.0
-        valor_str = str(valor).strip()
-        valor_str = valor_str.replace('.', '').replace(',', '.')
-        try:
-            return float(valor_str)
-        except:
-            return 0.0
+        valor_str = str(valor).strip().replace('.', '').replace(',', '.')
+        try: return float(valor_str)
+        except: return 0.0
 
     df['RangoMin'] = df['RangoMin'].apply(limpiar_numero)
     df['RangoMax'] = df['RangoMax'].apply(limpiar_numero)
     df['Precio'] = df['Precio'].apply(limpiar_numero)
-    
     return df
+
+def registrar_en_hoja6(nombre, distrito, proyectos, whatsapp, total):
+    try:
+        global client
+        if client is None: client = conectar_google()
+        sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Hoja6")
+        
+        # Formateamos la fecha y los proyectos para que queden legibles en una celda
+        fecha = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        proyectos_str = str(proyectos)
+        
+        # Orden de columnas: nombre, distrito, proyectos, whatsapp, total, fecha
+        nueva_fila = [nombre, distrito, proyectos_str, whatsapp, total, fecha]
+        sheet.append_row(nueva_fila)
+        print(f"✅ Datos guardados en Hoja6 para: {nombre}")
+    except Exception as e:
+        print(f"❌ Error al guardar en Hoja6: {e}")
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Servidor Cotizador ONLINE - Versión v2.2 (Soporte Form-Data Activo) 🚀", 200
+    return "Servidor Cotizador ONLINE - v2.5 (Registro Hoja6 Activo) 🚀", 200
 
 @app.route('/confirmar_pago', methods=['POST'])
 def confirmar_pago():
     try:
-        # --- SOPORTE HÍBRIDO: JSON O FORM-DATA ---
-        if request.is_json:
-            data = request.get_json()
-        else:
-            data = request.form
-
-        # --- CAPTURAMOS DATOS DEL CLIENTE ---
+        data = request.get_json() if request.is_json else request.form
         nombre_user = data.get('nombre', 'Cliente')
         distrito_user = data.get('distrito', 'No especificado')
+        whatsapp_user = data.get('whatsapp', 'Sin número')
         
-        # Manejo de Proyectos (convertir de texto a lista si es necesario)
         proyectos_raw = data.get('proyectos', '[]')
         if isinstance(proyectos_raw, str):
-            try:
-                proyectos = json.loads(proyectos_raw)
-            except:
-                proyectos = [] # Si falla el parseo, lista vacía
+            try: proyectos = json.loads(proyectos_raw)
+            except: proyectos = []
         else:
             proyectos = proyectos_raw
         
         df = leer_y_limpiar_excel()
-        
         subtotal = 0
         detalles = []
         conteos = {} 
@@ -97,20 +100,12 @@ def confirmar_pago():
             ambiente_user = str(p.get('ambiente', '')).strip().lower()
             m2_user = float(p.get('m2', 0))
 
-            # --- LÓGICA DE NUMERACIÓN (SALA 1, SALA 2) ---
-            if ambiente_user not in conteos:
-                conteos[ambiente_user] = 1
-            else:
-                conteos[ambiente_user] += 1
+            if ambiente_user not in conteos: conteos[ambiente_user] = 1
+            else: conteos[ambiente_user] += 1
             
             total_de_este_tipo = sum(1 for x in proyectos if str(x.get('ambiente', '')).strip().lower() == ambiente_user)
-            
-            if total_de_este_tipo > 1:
-                label_ambiente = f"{ambiente_user.upper()} {conteos[ambiente_user]}"
-            else:
-                label_ambiente = ambiente_user.upper()
+            label_ambiente = f"{ambiente_user.upper()} {conteos[ambiente_user]}" if total_de_este_tipo > 1 else ambiente_user.upper()
 
-            # --- BÚSQUEDA EN EXCEL ---
             df_amb = df[df['Ambiente'].str.strip().str.lower() == ambiente_user]
             fila = df_amb[(df_amb['RangoMin'] <= m2_user) & (df_amb['RangoMax'] >= m2_user)]
 
@@ -122,7 +117,10 @@ def confirmar_pago():
                 detalles.append(f"{label_ambiente} ({m2_user} m2) = No hay rango en tabla")
 
         igv = subtotal * 0.18
-        total = subtotal + igv
+        total_final = subtotal + igv
+
+        # --- LLAMADA PARA GUARDAR EN HOJA 6 ---
+        registrar_en_hoja6(nombre_user, distrito_user, proyectos, whatsapp_user, total_final)
 
         return jsonify({
             "status": "success",
@@ -131,11 +129,11 @@ def confirmar_pago():
             "detalles": detalles,
             "subtotal": round(subtotal, 2),
             "igv": round(igv, 2),
-            "total": round(total, 2)
+            "total": round(total_final, 2)
         }), 200
 
     except Exception as e:
-        print(f"❌ Error en /confirmar_pago: {e}")
+        print(f"❌ Error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
