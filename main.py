@@ -31,7 +31,7 @@ def confirmar_pago():
     try:
         data = request.get_json() if request.is_json else request.form
         nombre_user = data.get('nombre', 'Cliente')
-        distrito_user = data.get('distrito', 'SJL')
+        distrito_user = data.get('distrito', 'SJL').strip().lower() # Limpieza para búsqueda
         whatsapp_user = data.get('whatsapp', 'S/N')
         
         # PROCESAR PROYECTOS (Asegurar que sea lista)
@@ -50,6 +50,9 @@ def confirmar_pago():
         # Limpieza de columnas del Excel
         df.columns = df.columns.str.strip()
         df['Ambiente_Busqueda'] = df['Ambiente'].astype(str).str.strip().str.lower()
+        # Aseguramos que la columna Distrito en el Excel también esté limpia para comparar
+        if 'Distrito' in df.columns:
+            df['Distrito_Busqueda'] = df['Distrito'].astype(str).str.strip().str.lower()
 
         subtotal = 0
         detalles = []
@@ -59,10 +62,17 @@ def confirmar_pago():
             amb_solicitado = str(p.get('ambiente', '')).strip().lower()
             m2_solicitado = float(p.get('m2', 0))
 
-            # Filtrar por Ambiente
-            df_amb = df[df['Ambiente_Busqueda'] == amb_solicitado]
+            # FILTRADO: Por Ambiente Y Distrito (si existe la columna)
+            if 'Distrito_Busqueda' in df.columns:
+                df_amb = df[
+                    (df['Ambiente_Busqueda'] == amb_solicitado) & 
+                    (df['Distrito_Busqueda'] == distrito_user)
+                ]
+            else:
+                # Si no hay columna distrito, filtramos solo por ambiente como antes
+                df_amb = df[df['Ambiente_Busqueda'] == amb_solicitado]
             
-            # Buscar el Rango (usando float para evitar errores de tipo)
+            # Buscar el Rango
             fila = df_amb[
                 (df_amb['RangoMin'].astype(float) <= m2_solicitado) & 
                 (df_amb['RangoMax'].astype(float) >= m2_solicitado)
@@ -73,20 +83,21 @@ def confirmar_pago():
                 subtotal += precio
                 detalles.append(f"{amb_solicitado.upper()} ({m2_solicitado}m2) = S/ {precio}")
             else:
-                detalles.append(f"{amb_solicitado.upper()}: Rango {m2_solicitado}m2 no encontrado")
+                detalles.append(f"{amb_solicitado.upper()}: Rango o Distrito no encontrado")
 
         total_final = subtotal * 1.18 # IGV incluido
         
         # GUARDAR EN HOJA 6 (nombre, distrito, proyectos, whatsapp, total)
         try:
             sheet6 = client.open_by_key(SPREADSHEET_ID).worksheet("Hoja6")
-            sheet6.append_row([nombre_user, distrito_user, str(proyectos), str(whatsapp_user), round(total_final, 2)])
+            sheet6.append_row([nombre_user, distrito_user.upper(), str(proyectos), str(whatsapp_user), round(total_final, 2)])
         except Exception as e:
             print(f"Error Hoja6: {e}")
 
         return jsonify({
             "status": "success",
             "cliente": nombre_user,
+            "distrito": distrito_user.upper(),
             "detalles": detalles,
             "total": round(total_final, 2)
         }), 200
